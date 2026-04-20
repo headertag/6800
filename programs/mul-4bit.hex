@@ -1,0 +1,22 @@
+# Unsigned 4-bit x 4-bit multiplication via repeated addition.
+# Multiplier and multiplicand are 4-bit unsigned (0-15).
+# Final product is left in accumulator A on halt.
+#
+# This run: 13 x 11 = 143 = $8F
+# To test other values, change the two #$xx immediates below.
+
+# --- Setup: stash multiplicand and multiplier in memory ---
+# (They live in memory per requirement E; extended-addressing stores them.)
+86 0D           # LDAA #$0D       A = 13 (multiplicand)
+B7 01 00        # STAA $0100      multiplicand -> $0100
+86 0B           # LDAA #$0B       A = 11 (multiplier — will be destroyed)
+B7 01 01        # STAA $0101      multiplier  -> $0101
+
+# --- Multiply: A = 0, then add multiplicand 'multiplier' times ---
+4F              # CLRA            A = 0 (running product)
+BB 01 00        # ADDA $0100   ;LOOP@$000C   A += multiplicand
+7A 01 01        # DEC  $0101                 counter -= 1
+26 F8           # BNE  $000C                 loop while counter != 0
+
+# --- Done: product is in A; halt ---
+3E              # WAI

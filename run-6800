@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# run-6800 — load a hex program into EXORsim, run it, dump registers + memory.
+#
+# Usage:
+#   ./run-6800 PROGRAM.hex [START_ADDR] [DUMP_ADDR DUMP_LEN]...
+#
+#   START_ADDR  : hex, default 0000
+#   DUMP pairs  : repeat as many as you want, e.g.  0102 1   or   0100 8
+#
+# A breakpoint is set automatically at the byte AFTER the last instruction,
+# so execution stops cleanly even if you forgot WAI. End your program in
+# WAI ($3E) anyway — that's how the real Heathkit halts.
+#
+# Hex files are forgiving: whitespace and `# comments` are stripped.
+#
+# Example:
+#   ./run-6800 programs/mul-7x7.hex 0000 0102 1
+
+set -euo pipefail
+
+PROG="${1:-}"
+if [[ -z "$PROG" || ! -r "$PROG" ]]; then
+  sed -n '2,16p' "$0" | sed 's/^# \?//'
+  exit 1
+fi
+shift
+
+START="${1:-0000}"; [[ $# -gt 0 ]] && shift || true
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+# Strip comments + non-hex chars, then convert to binary.
+awk '{ sub(/#.*/,""); print }' "$PROG" \
+  | tr -cd '0-9A-Fa-f' \
+  | xxd -r -p > "$TMP/prog.bin"
+
+LEN=$(stat -c%s "$TMP/prog.bin")
+if [[ "$LEN" -eq 0 ]]; then
+  echo "error: $PROG contains no hex bytes" >&2
+  exit 1
+fi
+
+START_DEC=$((16#$START))
+BP_DEC=$((START_DEC + LEN - 1))   # breakpoint on the WAI byte
+BP=$(printf '%04x' "$BP_DEC")
+
+# Remember the dump requests so we can label them in the output.
+DUMP_REQS=("$@")
+
+# Build monitor command stream. EXORsim wants \r line endings.
+{
+  printf 'read prog.bin %s\r' "$START"
+  printf 'b %s\r' "$BP"
+  printf 'c %s\r' "$START"
+  printf 'r\r'
+  while [[ $# -ge 2 ]]; do
+    printf 'd %s %s\r' "$1" "$2"
+    shift 2
+  done
+  printf 'q\r'
+} | (docker run --rm -i -v "$TMP:/work" 6800-exorsim exor --mon 2>&1 || true) \
+  | awk -v START="$START_DEC" -v PROGLEN="$LEN" '
+      BEGIN { skip_first_loaded=1 }
+      /^Loaded 65536 bytes starting at 0$/ && skip_first_loaded { skip_first_loaded=0; next }
+      /^Loaded [0-9]+ bytes starting at 0$/ {
+        printf "loaded %d bytes at $%04X\n", PROGLEN, START; next
+      }
+      /^Breakpoint added/ { printf "breakpoint set at $%s (end of program)\n", $3; next }
+      /^Breakpoint!/      { print "--- halted ---"; next }
+      /^PC=/              {
+        # Compress whitespace, prepend register label
+        gsub(/  +/, " "); print "registers: " $0; next
+      }
+      /^[0-9A-Fa-f]{4}: / { dump_lines[++ndump] = $0; next }
+      END {
+        if (ndump > 0) {
+          print "memory:"
+          for (i=1; i<=ndump; i++) print "  " dump_lines[i]
+        }
+      }
+    '
