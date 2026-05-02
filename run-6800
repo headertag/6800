@@ -59,7 +59,7 @@ DUMP_REQS=("$@")
     shift 2
   done
   printf 'q\r'
-} | (docker run --rm -i -v "$TMP:/work" 6800-exorsim exor --mon 2>&1 || true) \
+} | (docker run --name "learn-6800-runner-$$" --rm -i -v "$TMP:/work" 6800-exorsim exor --mon 2>&1 || true) \
   | awk -v START="$START_DEC" -v PROGLEN="$LEN" '
       BEGIN { skip_first_loaded=1 }
       /^Loaded 65536 bytes starting at 0$/ && skip_first_loaded { skip_first_loaded=0; next }

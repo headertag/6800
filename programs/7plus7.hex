@@ -1,0 +1,14 @@
+4F # CLRA
+97 # STAA
+0F # memory loc where answer will go
+97 # STA
+0B # memory loc
+96 # LDA
+0C # memory loc
+9B # ADD
+0D # memory loc
+97 # STA
+0E # where answ is stored
+3E # HALT
+07 # number being added
+07 # adder
