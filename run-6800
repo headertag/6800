@@ -2,19 +2,11 @@
 # run-6800 — load a hex program into EXORsim, run it, dump registers + memory.
 #
 # Usage:
-#   ./run-6800 PROGRAM.hex [START_ADDR] [DUMP_ADDR DUMP_LEN]...
+#   ./run-6800 PROGRAM.hex [START_ADDR] [BREAK_ADDR] [DUMP_ADDR DUMP_LEN]...
 #
 #   START_ADDR  : hex, default 0000
+#   BREAK_ADDR  : hex, optional explicit breakpoint!
 #   DUMP pairs  : repeat as many as you want, e.g.  0102 1   or   0100 8
-#
-# A breakpoint is set automatically at the byte AFTER the last instruction,
-# so execution stops cleanly even if you forgot WAI. End your program in
-# WAI ($3E) anyway — that's how the real Heathkit halts.
-#
-# Hex files are forgiving: whitespace and `# comments` are stripped.
-#
-# Example:
-#   ./run-6800 programs/mul-7x7.hex 0000 0102 1
 
 set -euo pipefail
 
@@ -26,6 +18,14 @@ fi
 shift
 
 START="${1:-0000}"; [[ $# -gt 0 ]] && shift || true
+
+# NEW: If there is an odd number of arguments left, the first one is our breakpoint!
+if (( $# % 2 != 0 )); then
+  USER_BP="$1"
+  shift
+else
+  USER_BP=""
+fi
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -42,7 +42,13 @@ if [[ "$LEN" -eq 0 ]]; then
 fi
 
 START_DEC=$((16#$START))
-BP_DEC=$((START_DEC + LEN - 1))   # breakpoint on the WAI byte
+
+# NEW: Apply user breakpoint if provided, otherwise default to end of file
+if [[ -n "$USER_BP" ]]; then
+  BP_DEC=$((16#$USER_BP))
+else
+  BP_DEC=$((START_DEC + LEN - 1))
+fi
 BP=$(printf '%04x' "$BP_DEC")
 
 # Remember the dump requests so we can label them in the output.
@@ -66,7 +72,7 @@ DUMP_REQS=("$@")
       /^Loaded [0-9]+ bytes starting at 0$/ {
         printf "loaded %d bytes at $%04X\n", PROGLEN, START; next
       }
-      /^Breakpoint added/ { printf "breakpoint set at $%s (end of program)\n", $3; next }
+      /^Breakpoint added/ { printf "breakpoint set at $%s\n", $3; next }
       /^Breakpoint!/      { print "--- halted ---"; next }
       /^PC=/              {
         # Compress whitespace, prepend register label
